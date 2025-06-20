@@ -4,7 +4,9 @@ import cv2
 import numpy as np
 import json
 import uuid
+import argparse
 from aiohttp import web, WSMsgType
+from aiohttp_cors import setup as setup_cors, ResourceOptions
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, MediaStreamTrack
 from av import VideoFrame, AudioFrame
 
@@ -167,12 +169,41 @@ async def on_shutdown(app):
     pcs.clear()
     rooms.clear()
 
-app = web.Application()
-app.on_shutdown.append(on_shutdown)
-app.router.add_get("/", index)
-app.router.add_get("/ws", websocket_handler)
-app.router.add_get("/api/rooms/{room_id}", get_room_info)
-app.router.add_post("/api/rooms", create_room)
-app.router.add_static("/static/", path="static", name="static")
-
-web.run_app(app, port=8081)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="WebRTC signaling server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8081, help="Port for HTTP server (default: 8081)")
+    parser.add_argument("--public-host", help="Public host name for WebRTC (for ngrok)")
+    args = parser.parse_args()
+    
+    # If using ngrok, set the public host
+    if args.public_host:
+        print(f"Using public host: {args.public_host}")
+    
+    # Create web application
+    app = web.Application()
+    app.on_shutdown.append(on_shutdown)
+    
+    # Setup CORS
+    cors = setup_cors(app, defaults={
+        "*": ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+        )
+    })
+    
+    # Add routes
+    app.router.add_get("/", index)
+    app.router.add_get("/ws", websocket_handler)
+    app.router.add_get("/api/rooms/{room_id}", get_room_info)
+    app.router.add_post("/api/rooms", create_room)
+    
+    # Add static files with CORS
+    static_resource = app.router.add_static("/static/", path="static", name="static")
+    cors.add(static_resource)
+    
+    # Run the app
+    print(f"Starting server on http://{args.host}:{args.port}")
+    web.run_app(app, host=args.host, port=args.port)

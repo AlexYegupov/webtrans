@@ -1,0 +1,6 @@
+aiohttp==3.12.13
+aiohttp-cors==0.8.1
+aiortc==1.13.0
+av==14.4.0
+numpy==2.3.0
+opencv-python==4.11.0.86

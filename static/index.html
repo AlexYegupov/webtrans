@@ -90,8 +90,13 @@
       
       // Function to create a WebSocket connection
       function connectWebSocket(roomId) {
+        // Determine WebSocket protocol based on page protocol
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        
+        // Handle ngrok URLs properly by using the same host as the page
+        // This ensures WebSocket connections work through ngrok tunnels
         const wsUrl = `${protocol}//${window.location.host}/ws${roomId ? `?room=${roomId}` : ''}`;
+        console.log(`Connecting to WebSocket at: ${wsUrl}`);
         
         ws = new WebSocket(wsUrl);
         
@@ -303,12 +308,16 @@
       async function createPeerConnection(userId) {
         console.log(`Creating peer connection for user ${userId}`);
         
-        // Create a new RTCPeerConnection
+        // Create a new RTCPeerConnection with more comprehensive ICE servers
         const pc = new RTCPeerConnection({
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
+          ],
+          iceCandidatePoolSize: 10 // Increase candidate pool for better connectivity
         });
         
         // Buffer for ICE candidates received before remote description is set
