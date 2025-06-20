@@ -17,12 +17,14 @@ websocket_connections = {}
 # Store room information
 rooms = {}
 
-# Generate a unique room ID if not provided
+# Always use a single default room
+DEFAULT_ROOM_ID = "main-room"
+
 def get_or_create_room(room_id=None):
-    if room_id is None or room_id not in rooms:
-        room_id = str(uuid.uuid4())
-        rooms[room_id] = {'users': {}}
-    return room_id
+    # Ignore the provided room_id and always use the default room
+    if DEFAULT_ROOM_ID not in rooms:
+        rooms[DEFAULT_ROOM_ID] = {'users': {}}
+    return DEFAULT_ROOM_ID
 
 class HeadlessVideoTrack(VideoStreamTrack):
     """A video track that generates a test pattern for headless server mode."""

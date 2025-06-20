@@ -23,7 +23,7 @@
   <h1>WebRTC Multi-User Chat Room</h1>
   
   <div class="room-info">
-    <h3>Room: <span id="roomId">Loading...</span></h3>
+    <h3>WebRTC Chat Room</h3>
     <div>
       <strong>Share this link to invite others:</strong>
       <input type="text" id="roomLink" readonly style="width: 100%; margin-top: 5px; padding: 5px;">
@@ -84,18 +84,17 @@
       
       // WebRTC variables are now defined globally
       
-      // Get room ID from URL or create a new one
-      const urlParams = new URLSearchParams(window.location.search);
-      const roomId = urlParams.get('room');
+      // We're using a single room, no need to get room ID from URL
       
       // Function to create a WebSocket connection
-      function connectWebSocket(roomId) {
+      function connectWebSocket() {
         // Determine WebSocket protocol based on page protocol
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         
         // Handle ngrok URLs properly by using the same host as the page
         // This ensures WebSocket connections work through ngrok tunnels
-        const wsUrl = `${protocol}//${window.location.host}/ws${roomId ? `?room=${roomId}` : ''}`;
+        // No room parameter needed as we always use the default room
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
         console.log(`Connecting to WebSocket at: ${wsUrl}`);
         
         ws = new WebSocket(wsUrl);
@@ -115,8 +114,7 @@
               case 'user_list':
                 // Update room information
                 currentRoomId = message.room_id;
-                roomIdElement.textContent = currentRoomId;
-                roomLinkElement.value = `${window.location.origin}${window.location.pathname}?room=${currentRoomId}`;
+                roomLinkElement.value = `${window.location.origin}${window.location.pathname}`;
                 
                 // Update user list
                 updateUserList(message.users);

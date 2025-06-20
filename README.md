@@ -4,7 +4,8 @@ This project enables real-time audio/video chat between multiple users using Web
 
 ## Features
 - Multi-user video and audio streaming via WebRTC
-- Room-based chat system
+- Single room system tied to domain name
+- Headless server mode with test pattern video
 - WebSocket signaling for connection establishment
 - Python backend with `aiohttp` and `aiortc`
 - Frontend client in vanilla HTML/JS
@@ -24,6 +25,16 @@ Then open in browser:
 ```
 http://localhost:8081/
 ```
+
+## Single Room System
+
+The application now uses a single room system where all users connecting to the same domain automatically join the same chat room. There's no need to specify or share room IDs - simply share the URL of the application.
+
+## Headless Server Mode
+
+The server runs in headless mode, which means it doesn't require a physical camera to operate. Instead, it generates a test pattern video stream. This makes the application more suitable for deployment on servers without camera hardware, such as cloud servers or containers.
+
+Users will see this test pattern when no one else is in the room, but will use their own camera and microphone for streaming to others.
 
 ## Using ngrok for Remote Access
 
