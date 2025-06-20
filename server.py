@@ -132,10 +132,12 @@ async def websocket_handler(request):
                             'from': user_id
                         })
                 elif data['type'] == 'get_users':
-                    # Send list of users in the room
+                    # Send list of users in the room, excluding the current user
+                    # This prevents the client from creating a peer connection with itself
+                    other_users = [uid for uid in rooms[room_id]['users'].keys() if uid != user_id]
                     await ws.send_json({
                         'type': 'user_list',
-                        'users': list(rooms[room_id]['users'].keys()),
+                        'users': other_users,
                         'room_id': room_id
                     })
             elif msg.type == WSMsgType.ERROR:
@@ -158,12 +160,14 @@ async def websocket_handler(request):
 async def broadcast_room_update(room_id):
     """Broadcast room user list to all connected clients in the room"""
     if room_id in websocket_connections:
-        user_list = list(rooms[room_id]['users'].keys())
+        all_users = list(rooms[room_id]['users'].keys())
         for user_id, ws in websocket_connections[room_id].items():
             try:
+                # Exclude the current user from the list sent to them
+                other_users = [uid for uid in all_users if uid != user_id]
                 await ws.send_json({
                     'type': 'user_list',
-                    'users': user_list,
+                    'users': other_users,
                     'room_id': room_id
                 })
             except Exception as e:

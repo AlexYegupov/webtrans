@@ -437,20 +437,18 @@
       
       // User list functionality removed
       
-      // Join button click handler
-      joinButton.addEventListener('click', async () => {
+      // Function to join the room
+      async function joinRoom() {
         try {
-          console.log('Join button clicked');
+          console.log('Joining room...');
           
-          // Get room ID from URL params or generate a new one
-          const urlParams = new URLSearchParams(window.location.search);
-          const roomId = urlParams.get('room') || generateUUID();
-          currentRoomId = roomId;
+          // We're using a single room, so no need to get room ID from URL
+          currentRoomId = 'main-room'; // This matches our server's DEFAULT_ROOM_ID
           
           // Generate a unique user ID
           currentUserId = generateUUID();
           console.log('User ID:', currentUserId);
-          console.log('Room ID:', roomId);
+          console.log('Room ID:', currentRoomId);
           
           // Check if mediaDevices is available
           if (typeof navigator.mediaDevices === 'undefined') {
@@ -465,9 +463,12 @@
             alert('Your browser does not support getUserMedia. Please use a modern browser like Chrome, Firefox, or Safari.');
             return;
           }
+        
+          // Update UI to show we're joining
+          joinButton.disabled = true;
+          joinButton.textContent = 'Connecting...';
           
           console.log('Requesting media access...');
-          // Request access to media devices with specific audio constraints
           try {
             console.log('Attempting to access media devices...');
             
@@ -541,7 +542,7 @@
             
             // Connect to WebSocket server regardless of media access
             console.log('Connecting to WebSocket server...');
-            ws = connectWebSocket(roomId);
+            ws = connectWebSocket();
           } catch (error) {
             console.error('Unexpected error:', error);
             alert('An unexpected error occurred: ' + (error.message || 'Unknown error'));
@@ -558,6 +559,15 @@
           console.error('Error joining room:', error);
           alert(`Could not join room: ${error.message}`);
         }
+      }
+      
+      // Join button click handler
+      joinButton.addEventListener('click', joinRoom);
+      
+      // Auto-join when the page loads
+      window.addEventListener('load', () => {
+        console.log('Page loaded, auto-joining room...');
+        joinRoom();
       });
       
       // Leave button click handler
