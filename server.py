@@ -1,9 +1,10 @@
 import asyncio
 import os
 import cv2
+import numpy as np
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-from av import VideoFrame
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, MediaStreamTrack
+from av import VideoFrame, AudioFrame
 
 pcs = set()
 
@@ -23,6 +24,23 @@ class CameraStreamTrack(VideoStreamTrack):
         video_frame.time_base = time_base
         return video_frame
 
+class DummyAudioStreamTrack(MediaStreamTrack):
+    kind = "audio"
+
+    def __init__(self):
+        super().__init__()
+        self.sample_rate = 48000
+        self.samples_per_frame = 960
+        self.channels = 1
+
+    async def recv(self):
+        pts, time_base = await self.next_timestamp()
+        sine_wave = np.zeros((self.samples_per_frame,), dtype=np.int16)
+        frame = AudioFrame.from_ndarray(sine_wave, format="s16", layout="mono")
+        frame.pts = pts
+        frame.time_base = time_base
+        return frame
+
 async def index(request):
     return web.FileResponse(os.path.join("static", "index.html"))
 
@@ -32,9 +50,15 @@ async def offer(request):
 
     pc = RTCPeerConnection()
     pcs.add(pc)
-    pc.addTrack(CameraStreamTrack())
 
+    # Сначала установить offer от клиента
     await pc.setRemoteDescription(offer)
+
+    # Затем добавить медиа-треки
+    pc.addTrack(CameraStreamTrack())
+    pc.addTrack(DummyAudioStreamTrack())
+
+    # Создать и установить ответ
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
@@ -50,8 +74,8 @@ async def on_shutdown(app):
 
 app = web.Application()
 app.on_shutdown.append(on_shutdown)
-app.router.add_get("/", index)  # маршрут на /
+app.router.add_get("/", index)
 app.router.add_post("/offer", offer)
 app.router.add_static("/static/", path="static", name="static")
 
-web.run_app(app, port=8080)
+web.run_app(app, port=8081)

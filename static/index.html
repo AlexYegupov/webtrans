@@ -13,6 +13,7 @@
 
       const pc = new RTCPeerConnection();
       pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
 
       pc.ontrack = (event) => {
         video.srcObject = event.streams[0];
