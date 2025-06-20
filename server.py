@@ -24,22 +24,7 @@ class CameraStreamTrack(VideoStreamTrack):
         video_frame.time_base = time_base
         return video_frame
 
-class DummyAudioStreamTrack(MediaStreamTrack):
-    kind = "audio"
-
-    def __init__(self):
-        super().__init__()
-        self.sample_rate = 48000
-        self.samples_per_frame = 960
-        self.channels = 1
-
-    async def recv(self):
-        pts, time_base = await self.next_timestamp()
-        sine_wave = np.zeros((self.samples_per_frame,), dtype=np.int16)
-        frame = AudioFrame.from_ndarray(sine_wave, format="s16", layout="mono")
-        frame.pts = pts
-        frame.time_base = time_base
-        return frame
+# We don't need the MicrophoneStreamTrack anymore as we'll use the client's microphone
 
 async def index(request):
     return web.FileResponse(os.path.join("static", "index.html"))
@@ -54,9 +39,8 @@ async def offer(request):
     # Сначала установить offer от клиента
     await pc.setRemoteDescription(offer)
 
-    # Затем добавить медиа-треки
+    # Затем добавить видео-трек
     pc.addTrack(CameraStreamTrack())
-    pc.addTrack(DummyAudioStreamTrack())
 
     # Создать и установить ответ
     answer = await pc.createAnswer()
@@ -68,6 +52,7 @@ async def offer(request):
     })
 
 async def on_shutdown(app):
+    # Close all peer connections
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()

@@ -2,34 +2,84 @@
 <html>
 <head>
   <title>WebRTC Stream</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+    button { padding: 10px 15px; margin: 10px 0; cursor: pointer; }
+    video { width: 100%; max-height: 480px; background: #000; }
+    .controls { margin-top: 15px; }
+  </style>
 </head>
 <body>
-  <h1>Live Camera</h1>
+  <h1>Live Camera and Microphone</h1>
   <video autoplay playsinline controls></video>
+  
+  <div class="controls">
+    <button id="startButton">Start Streaming</button>
+    <button id="stopButton" disabled>Stop Streaming</button>
+  </div>
 
   <script>
     document.addEventListener("DOMContentLoaded", async () => {
       const video = document.querySelector("video");
-
-      const pc = new RTCPeerConnection();
-      pc.addTransceiver("video", { direction: "recvonly" });
-      pc.addTransceiver("audio", { direction: "recvonly" });
-
-      pc.ontrack = (event) => {
-        video.srcObject = event.streams[0];
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      const res = await fetch("/offer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pc.localDescription),
+      const startButton = document.getElementById("startButton");
+      const stopButton = document.getElementById("stopButton");
+      let pc = null;
+      
+      startButton.addEventListener("click", async () => {
+        startButton.disabled = true;
+        
+        try {
+          // Request access to microphone and camera
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          console.log("Microphone access granted");
+          
+          // Create peer connection
+          pc = new RTCPeerConnection();
+          
+          // Add local audio track from microphone to the connection
+          stream.getAudioTracks().forEach(track => {
+            pc.addTrack(track, stream);
+          });
+          
+          // Add video transceiver to receive video from server
+          pc.addTransceiver("video", { direction: "recvonly" });
+          
+          pc.ontrack = (event) => {
+            video.srcObject = event.streams[0];
+          };
+          
+          // Create and send offer
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          
+          const res = await fetch("/offer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(pc.localDescription),
+          });
+          
+          const answer = await res.json();
+          await pc.setRemoteDescription(answer);
+          
+          stopButton.disabled = false;
+        } catch (err) {
+          console.error("Error starting stream:", err);
+          startButton.disabled = false;
+        }
       });
-
-      const answer = await res.json();
-      await pc.setRemoteDescription(answer);
+      
+      stopButton.addEventListener("click", () => {
+        if (pc) {
+          pc.close();
+          pc = null;
+        }
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(track => track.stop());
+          video.srcObject = null;
+        }
+        startButton.disabled = false;
+        stopButton.disabled = true;
+      });
     });
   </script>
 </body>
