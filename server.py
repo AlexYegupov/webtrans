@@ -24,17 +24,45 @@ def get_or_create_room(room_id=None):
         rooms[room_id] = {'users': {}}
     return room_id
 
-class CameraStreamTrack(VideoStreamTrack):
+class HeadlessVideoTrack(VideoStreamTrack):
+    """A video track that generates a test pattern for headless server mode."""
     def __init__(self):
         super().__init__()
-        self.cap = cv2.VideoCapture(0)
+        # Create a simple color test pattern
+        height, width = 480, 640
+        self.img = np.zeros((height, width, 3), np.uint8)
+        
+        # Create color gradient background
+        for i in range(height):
+            for j in range(width):
+                self.img[i, j, 0] = 255 * i // height  # Blue gradient
+                self.img[i, j, 1] = 255 * j // width    # Green gradient
+                self.img[i, j, 2] = 255 * (i + j) // (height + width)  # Red gradient
+        
+        # Add text to the image
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(self.img, 'WebRTC Headless Server', (50, height//2 - 50), 
+                    font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(self.img, 'Running in Headless Mode', (50, height//2), 
+                    font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(self.img, 'Use your browser camera instead', (50, height//2 + 50), 
+                    font, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
-        ret, frame = self.cap.read()
-        if not ret:
-            raise Exception("Не удалось прочитать кадр с камеры")
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Create a copy to avoid modifying the original
+        frame = self.img.copy()
+        
+        # Add a moving element to show it's live
+        timestamp = int(time.time() * 10) % 100
+        cv2.putText(frame, f'Server Time: {timestamp/10:.1f}s', 
+                   (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+        
+        # Add current date and time
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        cv2.putText(frame, current_time, 
+                   (width - 230, height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+        
         video_frame = VideoFrame.from_ndarray(frame, format="rgb24")
         video_frame.pts = pts
         video_frame.time_base = time_base
