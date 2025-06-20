@@ -1,84 +1,746 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>WebRTC Stream</title>
+  <title>WebRTC Multi-User Chat</title>
+  <!-- WebRTC adapter.js for better browser compatibility -->
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+    body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
     button { padding: 10px 15px; margin: 10px 0; cursor: pointer; }
-    video { width: 100%; max-height: 480px; background: #000; }
-    .controls { margin-top: 15px; }
+    .video-container { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .video-item { position: relative; width: 320px; }
+    .video-item video { width: 100%; height: 240px; background: #000; object-fit: cover; }
+    .video-item .label { position: absolute; bottom: 5px; left: 5px; background: rgba(0,0,0,0.5); color: white; padding: 3px 8px; font-size: 12px; }
+    .controls { margin: 20px 0; }
+    .room-info { margin-bottom: 20px; padding: 10px; background: #f0f0f0; border-radius: 5px; }
+    .user-list { margin-top: 10px; }
+    .user-list span { display: inline-block; margin-right: 10px; padding: 3px 8px; background: #e0e0e0; border-radius: 3px; }
+    .local-controls { display: flex; gap: 10px; margin-top: 10px; }
+    .muted { background-color: #ff6b6b !important; }
   </style>
 </head>
 <body>
-  <h1>Live Camera and Microphone</h1>
-  <video autoplay playsinline controls></video>
+  <h1>WebRTC Multi-User Chat Room</h1>
+  
+  <div class="room-info">
+    <h3>Room: <span id="roomId">Loading...</span></h3>
+    <div>
+      <strong>Share this link to invite others:</strong>
+      <input type="text" id="roomLink" readonly style="width: 100%; margin-top: 5px; padding: 5px;">
+    </div>
+    <div class="user-list">
+      <strong>Users in room:</strong>
+      <div id="userListContainer"></div>
+    </div>
+  </div>
   
   <div class="controls">
-    <button id="startButton">Start Streaming</button>
-    <button id="stopButton" disabled>Stop Streaming</button>
+    <button id="joinButton">Join Room</button>
+    <button id="leaveButton" disabled>Leave Room</button>
+    <div class="local-controls">
+      <button id="muteAudioButton" disabled>Mute Audio</button>
+      <button id="muteVideoButton" disabled>Disable Camera</button>
+      <button id="debugButton">Debug Audio</button>
+    </div>
+  </div>
+  
+  <div class="video-container" id="videoContainer">
+    <div class="video-item">
+      <video id="localVideo" autoplay playsinline muted></video>
+      <div class="label">You</div>
+    </div>
   </div>
 
   <script>
-    document.addEventListener("DOMContentLoaded", async () => {
-      const video = document.querySelector("video");
-      const startButton = document.getElementById("startButton");
-      const stopButton = document.getElementById("stopButton");
-      let pc = null;
+    // Initialize variables at the global scope
+    let localStream = null;
+    let peerConnections = {};
+    let currentUserId = null;
+    let currentRoomId = null;
+    let ws = null;
+    let isAudioMuted = false;
+    let isVideoMuted = false;
+    
+    // Helper function to generate a UUID (compatible with older browsers)
+    function generateUUID() {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+    
+    document.addEventListener('DOMContentLoaded', () => {
+      // DOM elements
+      const joinButton = document.getElementById('joinButton');
+      const leaveButton = document.getElementById('leaveButton');
+      const muteAudioButton = document.getElementById('muteAudioButton');
+      const muteVideoButton = document.getElementById('muteVideoButton');
+      const localVideo = document.getElementById('localVideo');
+      const videoContainer = document.getElementById('videoContainer');
+      const roomIdElement = document.getElementById('roomId');
+      const roomLinkElement = document.getElementById('roomLink');
+      const userListContainer = document.getElementById('userListContainer');
       
-      startButton.addEventListener("click", async () => {
-        startButton.disabled = true;
+      // WebRTC variables are now defined globally
+      
+      // Get room ID from URL or create a new one
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomId = urlParams.get('room');
+      
+      // Function to create a WebSocket connection
+      function connectWebSocket(roomId) {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws${roomId ? `?room=${roomId}` : ''}`;
         
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+          console.log('WebSocket connection established');
+          // Request the list of users in the room
+          ws.send(JSON.stringify({ type: 'get_users' }));
+        };
+        
+        ws.onmessage = async (event) => {
+          const message = JSON.parse(event.data);
+          console.log('Received WebSocket message:', message.type);
+          
+          try {
+            switch (message.type) {
+              case 'user_list':
+                // Update room information
+                currentRoomId = message.room_id;
+                roomIdElement.textContent = currentRoomId;
+                roomLinkElement.value = `${window.location.origin}${window.location.pathname}?room=${currentRoomId}`;
+                
+                // Update user list
+                updateUserList(message.users);
+                
+                // Create peer connections with all users except ourselves
+                for (const userId of message.users) {
+                  if (userId !== currentUserId && !peerConnections[userId]) {
+                    console.log(`Creating new peer connection for user ${userId}`);
+                    
+                    // Determine if this peer is "polite" based on user IDs comparison
+                    // This ensures consistent behavior when both peers try to negotiate simultaneously
+                    const isPolite = currentUserId > userId;
+                    console.log(`This peer is ${isPolite ? 'polite' : 'impolite'} with ${userId}`);
+                    
+                    // Store polite status with the peer connection
+                    const pc = await createPeerConnection(userId);
+                    pc._isPolite = isPolite;
+                    
+                    // Only the "impolite" peer initiates the connection to avoid collisions
+                    if (!isPolite) {
+                      setTimeout(async () => {
+                        try {
+                          if (peerConnections[userId] && peerConnections[userId].signalingState === 'stable') {
+                            console.log(`Creating offer for user ${userId} (as impolite peer)`);
+                            const offer = await peerConnections[userId].createOffer();
+                            await peerConnections[userId].setLocalDescription(offer);
+                            ws.send(JSON.stringify({
+                              type: 'offer',
+                              target: userId,
+                              offer: peerConnections[userId].localDescription
+                            }));
+                          }
+                        } catch (error) {
+                          console.error(`Error creating offer for ${userId}:`, error);
+                        }
+                      }, 1000);
+                    }
+                  }
+                }
+                break;
+                
+              case 'offer':
+                // Handle incoming offer from another user
+                const offerUserId = message.from;
+                console.log(`Received offer from ${offerUserId}`);
+                
+                try {
+                  // Create peer connection if it doesn't exist
+                  if (!peerConnections[offerUserId]) {
+                    console.log(`Creating peer connection for offer from ${offerUserId}`);
+                    const pc = await createPeerConnection(offerUserId);
+                    pc._isPolite = currentUserId > offerUserId;
+                  }
+                  
+                  const pc = peerConnections[offerUserId];
+                  const isPolite = pc._isPolite;
+                  
+                  // Perfect negotiation pattern
+                  const offerCollision = pc.signalingState !== 'stable';
+                  
+                  // If there's a collision, the polite peer backs off
+                  if (offerCollision) {
+                    if (isPolite) {
+                      console.log(`Polite peer backing off for ${offerUserId}`);
+                      // Polite peer rolls back local description if needed
+                      await Promise.all([
+                        pc.setLocalDescription({type: 'rollback'}),
+                        pc.setRemoteDescription(new RTCSessionDescription(message.offer))
+                      ]);
+                    } else {
+                      console.log(`Impolite peer ignoring offer from ${offerUserId} during collision`);
+                      return; // Impolite peer ignores the offer
+                    }
+                  } else {
+                    // No collision, proceed normally
+                    console.log(`Setting remote description for ${offerUserId}, current state: ${pc.signalingState}`);
+                    await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
+                  }
+                  
+                  // Process any buffered ICE candidates now that we have a remote description
+                  pc._hasRemoteDescription = true;
+                  if (pc._iceCandidateBuffer.length > 0) {
+                    console.log(`Processing ${pc._iceCandidateBuffer.length} buffered ICE candidates for ${offerUserId}`);
+                    for (const candidate of pc._iceCandidateBuffer) {
+                      try {
+                        await pc.addIceCandidate(candidate);
+                      } catch (e) {
+                        console.error(`Error adding buffered ICE candidate:`, e);
+                      }
+                    }
+                    pc._iceCandidateBuffer = []; // Clear the buffer
+                  }
+                  
+                  // Create and send answer
+                  console.log(`Creating answer for ${offerUserId}`);
+                  const answer = await pc.createAnswer();
+                  await pc.setLocalDescription(answer);
+                  
+                  ws.send(JSON.stringify({
+                    type: 'answer',
+                    target: offerUserId,
+                    answer: pc.localDescription
+                  }));
+                  console.log(`Answer sent to ${offerUserId}`);
+                } catch (error) {
+                  console.error(`Error handling offer from ${offerUserId}:`, error);
+                }
+                break;
+                
+              case 'answer':
+                // Handle incoming answer to our offer
+                const answerUserId = message.from;
+                console.log(`Received answer from ${answerUserId}`);
+                
+                try {
+                  if (peerConnections[answerUserId]) {
+                    const pc = peerConnections[answerUserId];
+                    
+                    // Only set remote answer if we're in have-local-offer state
+                    // This prevents errors when receiving an answer without sending an offer
+                    if (pc.signalingState === 'have-local-offer') {
+                      console.log(`Setting remote description (answer) for ${answerUserId}`);
+                      await pc.setRemoteDescription(new RTCSessionDescription(message.answer));
+                      
+                      // Process any buffered ICE candidates now that we have a remote description
+                      pc._hasRemoteDescription = true;
+                      if (pc._iceCandidateBuffer.length > 0) {
+                        console.log(`Processing ${pc._iceCandidateBuffer.length} buffered ICE candidates for ${answerUserId}`);
+                        for (const candidate of pc._iceCandidateBuffer) {
+                          try {
+                            await pc.addIceCandidate(candidate);
+                          } catch (e) {
+                            console.error(`Error adding buffered ICE candidate:`, e);
+                          }
+                        }
+                        pc._iceCandidateBuffer = []; // Clear the buffer
+                      }
+                    } else {
+                      console.warn(`Ignoring answer from ${answerUserId} in ${pc.signalingState} state`);
+                    }
+                  }
+                } catch (error) {
+                  console.error(`Error handling answer from ${answerUserId}:`, error);
+                }
+                break;
+                
+              case 'ice_candidate':
+                // Handle incoming ICE candidate
+                const candidateUserId = message.from;
+                
+                try {
+                  if (peerConnections[candidateUserId]) {
+                    const pc = peerConnections[candidateUserId];
+                    const candidate = new RTCIceCandidate(message.candidate);
+                    
+                    // Check if we can add the ICE candidate now or need to buffer it
+                    if (pc.remoteDescription && pc.remoteDescription.type) {
+                      console.log(`Adding ICE candidate from ${candidateUserId}`);
+                      await pc.addIceCandidate(candidate);
+                      pc._hasRemoteDescription = true;
+                    } else {
+                      // Buffer the candidate for later
+                      console.log(`Buffering ICE candidate from ${candidateUserId} (remote description not set yet)`);
+                      pc._iceCandidateBuffer.push(candidate);
+                    }
+                  }
+                } catch (error) {
+                  console.error(`Error handling ICE candidate from ${candidateUserId}:`, error);
+                }
+                break;
+            }
+          } catch (error) {
+            console.error('Error handling WebSocket message:', error);
+          }
+        };
+        
+        ws.onclose = () => {
+          console.log('WebSocket connection closed');
+        };
+        
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+        };
+        
+        return ws;
+      }
+      
+      // Function to create a peer connection with another user
+      async function createPeerConnection(userId) {
+        console.log(`Creating peer connection for user ${userId}`);
+        
+        // Create a new RTCPeerConnection
+        const pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        });
+        
+        // Buffer for ICE candidates received before remote description is set
+        pc._iceCandidateBuffer = [];
+        pc._hasRemoteDescription = false;
+        
+        // Store the connection
+        peerConnections[userId] = pc;
+        
+        // Add local tracks to the connection
+        if (localStream) {
+          localStream.getTracks().forEach(track => {
+            console.log(`Adding ${track.kind} track to peer connection for ${userId}`);
+            pc.addTrack(track, localStream);
+          });
+        }
+        
+        // Handle ICE candidates
+        pc.onicecandidate = event => {
+          if (event.candidate) {
+            console.log(`Sending ICE candidate to ${userId}`);
+            ws.send(JSON.stringify({
+              type: 'ice_candidate',
+              candidate: event.candidate,
+              target: userId
+            }));
+          }
+        };
+        
+        // Handle connection state changes
+        pc.onconnectionstatechange = () => {
+          console.log(`Connection state for ${userId}: ${pc.connectionState}`);
+        };
+        
+        // Handle ICE connection state changes
+        pc.oniceconnectionstatechange = () => {
+          console.log(`ICE connection state for ${userId}: ${pc.iceConnectionState}`);
+        };
+        
+        // Handle signaling state changes
+        pc.onsignalingstatechange = () => {
+          console.log(`Signaling state for ${userId}: ${pc.signalingState}`);
+        };
+        
+        // Handle negotiation needed
+        pc.onnegotiationneeded = async () => {
+          console.log(`Negotiation needed for ${userId}`);
+          try {
+            // Check if we're already negotiating
+            if (pc.signalingState !== 'stable') {
+              console.log(`Skipping negotiation for ${userId} - signaling state is ${pc.signalingState}`);
+              return;
+            }
+            
+            // Create an offer
+            console.log(`Creating offer for ${userId}`);
+            const offer = await pc.createOffer();
+            
+            // Check if connection is still valid
+            if (pc.signalingState === 'closed') {
+              console.log(`Connection with ${userId} was closed during offer creation`);
+              return;
+            }
+            
+            await pc.setLocalDescription(offer);
+            console.log(`Local description set for ${userId}`);
+            
+            // Send the offer to the other user
+            ws.send(JSON.stringify({
+              type: 'offer',
+              offer: pc.localDescription,
+              target: userId
+            }));
+          } catch (error) {
+            console.error(`Error creating offer for ${userId}:`, error);
+          }
+        };
+        
+        // Handle incoming tracks
+        pc.ontrack = event => {
+          console.log(`Received ${event.track.kind} track from ${userId}`);
+          
+          // Create or get the video element for this user
+          let videoElement = document.getElementById(`video-${userId}`);
+          
+          if (!videoElement) {
+            // Create a new container for this user's video
+            const videoContainer = document.createElement('div');
+            videoContainer.className = 'video-container';
+            videoContainer.id = `container-${userId}`;
+            
+            // Create the video element
+            videoElement = document.createElement('video');
+            videoElement.id = `video-${userId}`;
+            videoElement.autoplay = true;
+            videoElement.playsInline = true;
+            videoElement.controls = true; // Add controls for audio adjustment
+            videoElement.volume = 1.0; // Set default volume to maximum
+            
+            // Create an audio indicator
+            const audioIndicator = document.createElement('div');
+            audioIndicator.className = 'audio-indicator';
+            audioIndicator.id = `audio-indicator-${userId}`;
+            audioIndicator.innerHTML = '🔊';
+            audioIndicator.style.display = 'none'; // Hidden by default
+            
+            // Add elements to the container
+            videoContainer.appendChild(videoElement);
+            videoContainer.appendChild(audioIndicator);
+            
+            // Add the container to the video container div
+            document.getElementById('videoContainer').appendChild(videoContainer);
+          }
+          
+          // Set the stream as the video source
+          if (videoElement.srcObject !== event.streams[0]) {
+            videoElement.srcObject = event.streams[0];
+            console.log(`Stream set for ${userId} with ${event.streams[0].getAudioTracks().length} audio tracks`);
+            
+            // Update audio indicator when tracks change
+            event.streams[0].onaddtrack = (trackEvent) => {
+              console.log(`Track added to stream for ${userId}:`, trackEvent.track.kind);
+              if (trackEvent.track.kind === 'audio') {
+                document.getElementById(`audio-indicator-${userId}`).textContent = 'Audio: Active';
+                document.getElementById(`audio-indicator-${userId}`).style.backgroundColor = 'rgba(0,255,0,0.5)';
+              }
+            };
+          }
+        };
+        
+        // Store the peer connection
+        peerConnections[userId] = pc;
+        return pc;
+      }
+      
+      // Function to update the user list display
+      function updateUserList(users) {
+        userListContainer.innerHTML = '';
+        users.forEach(userId => {
+          const userSpan = document.createElement('span');
+          userSpan.textContent = userId === currentUserId ? 'You' : `User-${userId.substring(0, 5)}`;
+          userListContainer.appendChild(userSpan);
+        });
+      }
+      
+      // Join button click handler
+      joinButton.addEventListener('click', async () => {
         try {
-          // Request access to microphone and camera
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          console.log("Microphone access granted");
+          console.log('Join button clicked');
           
-          // Create peer connection
-          pc = new RTCPeerConnection();
+          // Get room ID from URL params or generate a new one
+          const urlParams = new URLSearchParams(window.location.search);
+          const roomId = urlParams.get('room') || generateUUID();
+          currentRoomId = roomId;
           
-          // Add local audio track from microphone to the connection
-          stream.getAudioTracks().forEach(track => {
-            pc.addTrack(track, stream);
-          });
+          // Generate a unique user ID
+          currentUserId = generateUUID();
+          console.log('User ID:', currentUserId);
+          console.log('Room ID:', roomId);
           
-          // Add video transceiver to receive video from server
-          pc.addTransceiver("video", { direction: "recvonly" });
+          // Check if mediaDevices is available
+          if (typeof navigator.mediaDevices === 'undefined') {
+            console.error('mediaDevices not available');
+            alert('Your browser does not support mediaDevices API. Please use a modern browser like Chrome, Firefox, or Safari.');
+            return;
+          }
           
-          pc.ontrack = (event) => {
-            video.srcObject = event.streams[0];
-          };
+          // Ensure getUserMedia is available
+          if (typeof navigator.mediaDevices.getUserMedia !== 'function') {
+            console.error('getUserMedia not available');
+            alert('Your browser does not support getUserMedia. Please use a modern browser like Chrome, Firefox, or Safari.');
+            return;
+          }
           
-          // Create and send offer
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
+          console.log('Requesting media access...');
+          // Request access to media devices with specific audio constraints
+          try {
+            console.log('Attempting to access media devices...');
+            
+            try {
+              // Use simpler constraints first
+              localStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: true, 
+                video: true 
+              });
+              
+              console.log('Media access granted');
+              
+              // Check if we have audio tracks
+              const audioTracks = localStream.getAudioTracks();
+              console.log('Audio tracks:', audioTracks.length);
+              if (audioTracks.length > 0) {
+                console.log('Audio track settings:', audioTracks[0].getSettings());
+              } else {
+                console.warn('No audio tracks available!');
+              }
+              
+              // Display local video
+              localVideo.srcObject = localStream;
+            } catch (mediaError) {
+              console.error('Error accessing media devices:');
+              console.error(mediaError.name || 'Unknown error');
+              console.error(mediaError.message || 'No error message');
+              console.error(mediaError.constraint || 'No constraint info');
+              
+              if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+                const useWithoutMedia = confirm('Camera/microphone access was denied. Would you like to continue in view-only mode (you can see and hear others but they cannot see or hear you)?');
+                
+                if (!useWithoutMedia) {
+                  alert('You need to allow camera and microphone access to use this application fully.');
+                  return;
+                }
+                
+                // Create empty tracks as placeholders
+                console.log('Creating empty media stream for view-only mode');
+                localStream = new MediaStream();
+                
+                // Add a message to the local video container
+                const placeholder = document.createElement('div');
+                placeholder.style.width = '100%';
+                placeholder.style.height = '100%';
+                placeholder.style.backgroundColor = '#333';
+                placeholder.style.color = 'white';
+                placeholder.style.display = 'flex';
+                placeholder.style.alignItems = 'center';
+                placeholder.style.justifyContent = 'center';
+                placeholder.style.textAlign = 'center';
+                placeholder.style.padding = '10px';
+                placeholder.innerHTML = '<p>View-only mode<br>Others cannot see or hear you</p>';
+                
+                document.querySelector('.local-video-container').appendChild(placeholder);
+              } else {
+                let errorMsg = 'Could not access your camera or microphone. ';
+                
+                if (mediaError.name === 'NotFoundError') {
+                  errorMsg += 'No camera or microphone found on your device.';
+                } else if (mediaError.name === 'NotReadableError' || mediaError.name === 'AbortError') {
+                  errorMsg += 'Your camera or microphone is already in use by another application.';
+                } else {
+                  errorMsg += `Error: ${mediaError.name || 'Unknown'}`;
+                }
+                
+                alert(errorMsg);
+                return;
+              }
+            }
+            
+            // Connect to WebSocket server regardless of media access
+            console.log('Connecting to WebSocket server...');
+            ws = connectWebSocket(roomId);
+          } catch (error) {
+            console.error('Unexpected error:', error);
+            alert('An unexpected error occurred: ' + (error.message || 'Unknown error'));
+            return;
+          }
           
-          const res = await fetch("/offer", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(pc.localDescription),
-          });
+          // Update UI
+          joinButton.disabled = true;
+          leaveButton.disabled = false;
+          muteAudioButton.disabled = false;
+          muteVideoButton.disabled = false;
           
-          const answer = await res.json();
-          await pc.setRemoteDescription(answer);
-          
-          stopButton.disabled = false;
-        } catch (err) {
-          console.error("Error starting stream:", err);
-          startButton.disabled = false;
+        } catch (error) {
+          console.error('Error joining room:', error);
+          alert(`Could not join room: ${error.message}`);
         }
       });
       
-      stopButton.addEventListener("click", () => {
-        if (pc) {
-          pc.close();
-          pc = null;
+      // Leave button click handler
+      leaveButton.addEventListener('click', () => {
+        // Close all peer connections
+        Object.values(peerConnections).forEach(pc => pc.close());
+        peerConnections = {};
+        
+        // Close WebSocket
+        if (ws) {
+          ws.close();
+          ws = null;
         }
-        if (video.srcObject) {
-          video.srcObject.getTracks().forEach(track => track.stop());
-          video.srcObject = null;
+        
+        // Stop local media tracks
+        if (localStream) {
+          localStream.getTracks().forEach(track => track.stop());
+          localStream = null;
+          localVideo.srcObject = null;
         }
-        startButton.disabled = false;
-        stopButton.disabled = true;
+        
+        // Remove all remote videos
+        const remoteVideos = document.querySelectorAll('.video-item:not(:first-child)');
+        remoteVideos.forEach(video => video.remove());
+        
+        // Update UI
+        joinButton.disabled = false;
+        leaveButton.disabled = true;
+        muteAudioButton.disabled = true;
+        muteVideoButton.disabled = true;
+        roomIdElement.textContent = 'Not connected';
+      });
+      
+      // Mute audio button click handler
+      muteAudioButton.addEventListener('click', () => {
+        if (localStream) {
+          const audioTracks = localStream.getAudioTracks();
+          audioTracks.forEach(track => {
+            track.enabled = isAudioMuted;
+          });
+          isAudioMuted = !isAudioMuted;
+          muteAudioButton.textContent = isAudioMuted ? 'Unmute Audio' : 'Mute Audio';
+          muteAudioButton.classList.toggle('muted', isAudioMuted);
+        }
+      });
+      
+      // Mute video button click handler
+      muteVideoButton.addEventListener('click', () => {
+        if (localStream) {
+          const videoTracks = localStream.getVideoTracks();
+          videoTracks.forEach(track => {
+            track.enabled = isVideoMuted;
+          });
+          isVideoMuted = !isVideoMuted;
+          muteVideoButton.textContent = isVideoMuted ? 'Enable Camera' : 'Disable Camera';
+          muteVideoButton.classList.toggle('muted', isVideoMuted);
+        }
+      });
+      
+      // Debug button click handler
+      document.getElementById('debugButton').addEventListener('click', () => {
+        console.log('=== AUDIO DEBUG INFORMATION ===');
+        
+        // Check local audio
+        console.log('Local stream:', localStream);
+        if (localStream) {
+          const audioTracks = localStream.getAudioTracks();
+          console.log('Local audio tracks:', audioTracks.length);
+          audioTracks.forEach((track, i) => {
+            console.log(`Local audio track ${i}:`, track);
+            console.log(`- Enabled:`, track.enabled);
+            console.log(`- Muted:`, track.muted);
+            console.log(`- Settings:`, track.getSettings());
+          });
+        }
+        
+        // Check peer connections
+        console.log('Peer connections:', Object.keys(peerConnections).length);
+        for (const [userId, pc] of Object.entries(peerConnections)) {
+          console.log(`Peer connection with ${userId}:`, pc);
+          console.log(`- Connection state:`, pc.connectionState);
+          console.log(`- ICE connection state:`, pc.iceConnectionState);
+          console.log(`- Signaling state:`, pc.signalingState);
+          
+          // Check transceivers
+          const transceivers = pc.getTransceivers();
+          console.log(`- Transceivers:`, transceivers.length);
+          transceivers.forEach((transceiver, i) => {
+            console.log(`  Transceiver ${i}:`);
+            console.log(`  - Direction:`, transceiver.direction);
+            console.log(`  - Current direction:`, transceiver.currentDirection);
+            console.log(`  - Mid:`, transceiver.mid);
+            console.log(`  - Sender:`, transceiver.sender);
+            console.log(`  - Receiver:`, transceiver.receiver);
+          });
+          
+          // Check remote video element
+          const videoElement = document.getElementById(`video-${userId}`);
+          if (videoElement) {
+            console.log(`- Video element:`, videoElement);
+            console.log(`  - Muted:`, videoElement.muted);
+            console.log(`  - Volume:`, videoElement.volume);
+            console.log(`  - Paused:`, videoElement.paused);
+            console.log(`  - Current time:`, videoElement.currentTime);
+            console.log(`  - Stream:`, videoElement.srcObject);
+            if (videoElement.srcObject) {
+              console.log(`  - Stream audio tracks:`, videoElement.srcObject.getAudioTracks().length);
+              console.log(`  - Stream video tracks:`, videoElement.srcObject.getVideoTracks().length);
+            }
+          }
+        }
+        
+        // Create audio test
+        try {
+          const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          const oscillator = audioContext.createOscillator();
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4 note
+          
+          const gainNode = audioContext.createGain();
+          gainNode.gain.setValueAtTime(0.1, audioContext.currentTime); // 10% volume
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+          
+          oscillator.start();
+          console.log('Playing test tone for 1 second...');
+          
+          setTimeout(() => {
+            oscillator.stop();
+            console.log('Test tone stopped');
+          }, 1000);
+          
+          console.log('Audio context state:', audioContext.state);
+        } catch (e) {
+          console.error('Error creating audio test:', e);
+        }
+        
+        // Display debug info on screen
+        let debugInfo = document.getElementById('debugInfo');
+        if (!debugInfo) {
+          debugInfo = document.createElement('div');
+          debugInfo.id = 'debugInfo';
+          debugInfo.style.position = 'fixed';
+          debugInfo.style.bottom = '10px';
+          debugInfo.style.left = '10px';
+          debugInfo.style.backgroundColor = 'rgba(0,0,0,0.7)';
+          debugInfo.style.color = 'white';
+          debugInfo.style.padding = '10px';
+          debugInfo.style.borderRadius = '5px';
+          debugInfo.style.maxHeight = '200px';
+          debugInfo.style.overflowY = 'auto';
+          debugInfo.style.maxWidth = '80%';
+          debugInfo.style.zIndex = '1000';
+          document.body.appendChild(debugInfo);
+        }
+        
+        debugInfo.innerHTML = `
+          <h3>Audio Debug Info</h3>
+          <p>Local audio tracks: ${localStream ? localStream.getAudioTracks().length : 'No local stream'}</p>
+          <p>Peer connections: ${Object.keys(peerConnections).length}</p>
+          <p>Browser: ${navigator.userAgent}</p>
+          <p>Click to dismiss</p>
+        `;
+        
+        debugInfo.onclick = () => debugInfo.style.display = 'none';
       });
     });
   </script>
