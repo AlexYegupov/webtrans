@@ -22,17 +22,7 @@
 <body>
   <h1>WebRTC Multi-User Chat Room</h1>
   
-  <div class="room-info">
-    <h3>WebRTC Chat Room</h3>
-    <div>
-      <strong>Share this link to invite others:</strong>
-      <input type="text" id="roomLink" readonly style="width: 100%; margin-top: 5px; padding: 5px;">
-    </div>
-    <div class="user-list">
-      <strong>Users in room:</strong>
-      <div id="userListContainer"></div>
-    </div>
-  </div>
+  <h2>WebRTC Chat Room</h2>
   
   <div class="controls">
     <button id="joinButton">Join Room</button>
@@ -78,9 +68,7 @@
       const muteVideoButton = document.getElementById('muteVideoButton');
       const localVideo = document.getElementById('localVideo');
       const videoContainer = document.getElementById('videoContainer');
-      const roomIdElement = document.getElementById('roomId');
-      const roomLinkElement = document.getElementById('roomLink');
-      const userListContainer = document.getElementById('userListContainer');
+      // Room-related elements removed
       
       // WebRTC variables are now defined globally
       
@@ -112,12 +100,8 @@
           try {
             switch (message.type) {
               case 'user_list':
-                // Update room information
+                // Store room ID for internal use
                 currentRoomId = message.room_id;
-                roomLinkElement.value = `${window.location.origin}${window.location.pathname}`;
-                
-                // Update user list
-                updateUserList(message.users);
                 
                 // Create peer connections with all users except ourselves
                 for (const userId of message.users) {
@@ -451,15 +435,7 @@
         return pc;
       }
       
-      // Function to update the user list display
-      function updateUserList(users) {
-        userListContainer.innerHTML = '';
-        users.forEach(userId => {
-          const userSpan = document.createElement('span');
-          userSpan.textContent = userId === currentUserId ? 'You' : `User-${userId.substring(0, 5)}`;
-          userListContainer.appendChild(userSpan);
-        });
-      }
+      // User list functionality removed
       
       // Join button click handler
       joinButton.addEventListener('click', async () => {
@@ -612,7 +588,6 @@
         leaveButton.disabled = true;
         muteAudioButton.disabled = true;
         muteVideoButton.disabled = true;
-        roomIdElement.textContent = 'Not connected';
       });
       
       // Mute audio button click handler
